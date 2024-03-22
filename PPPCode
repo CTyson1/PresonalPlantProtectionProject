@@ -1,0 +1,197 @@
+/*
+  # Values for the Moisture Sensor
+  # 0  ~300     dry soil
+  # 300~700     humid soil
+  # 700~950     in water
+*/
+ #include <Servo.h>
+ #include <math.h>
+ #include <LiquidCrystal.h>
+ Servo myservo;
+
+#define PI 3.1415926535897932384626433832795
+#define Grav 9.81
+
+ // Global Variables
+int MoistureArray[1023];
+int LightArray[1023];
+int index = 0;
+int MoistureValue;
+int LightLevel;
+int water_threshold = 300;
+int light_threshold = 300;
+double height; // Height of water in Tank
+double TimeForServo; // Time for servo (used for demonstration)
+LiquidCrystal lcd(7, 8, 9, 10, 11, 12);
+
+
+void setup(){
+ 
+  Serial.begin(57600);
+  myservo.attach(13); // Servo on pin 13
+  myservo.write(0);   // move servos to center position -> 0
+  pinMode(2,OUTPUT);
+  lcd.begin(16, 2);
+  lcd.print("Moisture: Light:");
+}
+ 
+void loop(){
+  
+  // Moisture Section
+  MoistureRead();   // Checks Moisture Sensor
+  MoistureStore(MoistureArray, MoistureValue);
+
+  // Light Section
+  LightLevelRead();   // Checks light sensor
+  LightLevelStore(LightArray, LightLevel);  // stores the light level in light array for future reading
+  
+  index ++;
+  if (index == 1024)
+    index = 0;
+
+  lcdHandle();
+  WaterLevel(); // Update Height of water
+  Buzzer(); // Signal if out of water
+  if (MoistureValue <= water_threshold) { // Moisture Check for Water Release
+    double VolumeFlow = VolumeFlowCalc(); // Calls for Volume Flow 
+    double Volumetotal = VolumeNeeded(); // Volume Total of water needed to hydrate plants
+    double timeFlow = Volumetotal / VolumeFlow; // Calculates time Servo needs to be open
+    timeFlow = timeFlow * 1000; // Seconds ->  ms
+    TimeForServo = timeFlow; // Used for testing display
+    WaterRelease(timeFlow); // Calls Water Release # is Time open 
+    
+  }
+  
+  Serial.print("Time open for Water Flow:");
+  Serial.println(TimeForServo);
+  delay(1000);
+  
+}
+int average(int* arr){
+  // calculates the average over the course of an array
+  int sum = 0;
+  int count = 0;
+  for (int i = 0; i < 1022; i ++){
+    sum += arr[i];
+    if (arr[i] != 0) count ++;
+  }
+  
+  return sum / count;
+}
+
+void lcdHandle(){
+  
+
+  lcd.setCursor(0, 1);
+  if (MoistureValue < 100) lcd.print("0");
+  if (MoistureValue < 10) lcd.print("0");
+  lcd.print(MoistureValue);
+  if(MoistureValue < 400){
+    lcd.print("!");
+  }
+  else{
+    lcd.print(" ");
+  }
+  lcd.print("      ");
+  if (LightLevel < 100) lcd.print("0");
+  if (LightLevel < 10) lcd.print("0");
+  lcd.print(LightLevel);
+  if (average(LightArray) < 300){
+    lcd.print("");
+  }
+}
+
+void MoistureRead(){
+  // Reads the soil moisture sensor and returns the value in MoistureValue
+
+  Serial.print("Moisture Sensor Value:");
+  MoistureValue = analogRead(0); // Reads Moisture Value
+  Serial.println(MoistureValue); // Writes Moisture Value
+  if (MoistureValue < 0) MoistureValue = 0;
+  if (MoistureValue > 950) MoistureValue = 950;
+  
+}
+
+void LightLevelRead(){
+  // Reads the light sensor and returns the value in LightLevel
+
+  Serial.print("Light Sensor Value:");
+  LightLevel=analogRead(1);//Read rotation sensor value from analog 1
+  Serial.println(LightLevel,DEC);//Print the value to serial port
+  if (LightLevel < 0) LightLevel = 0;
+  if (LightLevel > 950) LightLevel = 950;
+
+}
+void WaterRelease(double releaseTime){
+  // Realeases water for "releaseTime" ms by activating the servo motor
+
+  Serial.println(releaseTime);
+  myservo.write(30);// Move servo to uncover water aperatus 30°
+  delay(releaseTime);
+  myservo.write(0);// Return servo to cover water aperatus -> 0°
+  delay(1); // Artifical Delay for demonstration of 10 seconds -> Actual application would wait a long time to then check moisture again
+
+}
+
+void MoistureStore(int* MoistureArray, int MoisterValue){
+  // Stores MoistureValue in MoistureArray for potential AI use cases.
+  MoistureArray[index] = MoisterValue;
+}
+
+void LightLevelStore(int* LightLevelArray, int LightLevel){
+  // Stores LightLevel in LightLevelArray for low light warning.
+  LightLevelArray[index] = LightLevel;
+}
+
+ double VolumeFlowCalc(){
+  // returns how fast the water is expected to pour from the servo setup
+
+  double Cv = 0.97; // Velocity Coeff Of water
+  double Cc = 0.62; // Contracption Coeffecient 0.62 for Sharp edge
+  double Cd = Cc * Cv; // Combined Coeff
+
+  double r = 0.02; // Radius of exit (in meters) Radius =
+  double Area = PI * pow(r,2); // Area is pi * r^2
+  
+  double VolumeFlow = Cd * Area * sqrt(2*Grav*height); // Bernoulis Vol = Coeff * Area * sqrt(2*g*h)
+  
+  return VolumeFlow; // Returns Value For VolumeFlow
+}
+
+  void WaterLevel(){
+    // estimates the ammount of water remaining in the system. Used to set off buzzer if there is no water.
+
+    double WaterData = analogRead(2);
+    WaterData = WaterData / 280 ; // Making Water Data Range between 0-1 in height
+    
+    height = WaterData; // Update height for Flow rate calulations
+    Serial.print("height Value:");
+    Serial.println(height);
+    
+  }
+
+  void Buzzer(){
+    // Gets your attention, I promise.
+    if (height <= 0.02) {
+      for (int j = 0; j<1000; j++){ // buzzer code for making noise
+
+        digitalWrite(2,HIGH);
+        delay(1);
+        digitalWrite(2,LOW);
+        delay(1);
+      } 
+    }
+    digitalWrite(2,LOW);
+  }
+
+  double VolumeNeeded(){
+    // if moisture is low, this attempts to find the water needed to correct that. For Better applicaiton ->
+    // Specific information is needed about the plant
+      double VolumeNeeded;
+      VolumeNeeded = 600 - MoistureValue;
+      if (VolumeNeeded < 0) VolumeNeeded = 0;
+      if (VolumeNeeded > 600) VolumeNeeded = 600;
+      VolumeNeeded /= 100000;
+
+    return VolumeNeeded;
+  }
